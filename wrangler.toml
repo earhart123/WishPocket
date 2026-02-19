@@ -5,7 +5,7 @@ compatibility_date = "2024-01-01"
 # Run `npx wrangler kv:namespace create WISH_KV` to get the ID
 [[kv_namespaces]]
 binding = "WISH_KV"
-id = "YOUR_KV_NAMESPACE_ID"
+id = "630ffb1316f94f4895116ed184e079a6"
 
 [site]
 bucket = "./build"
