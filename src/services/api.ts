@@ -26,7 +26,8 @@ const generateId = () => {
 };
 
 // Helper to fetch with timeout
-const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 3000) => {
+// Increased timeout to 8000ms as scraping can be slow
+const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 8000) => {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
@@ -50,21 +51,33 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
       });
+      
       const contentType = res.headers.get('content-type');
       if (res.ok && contentType?.includes('application/json')) {
         const json = await res.json() as ApiResponse<ScrapedData>;
         if (!json.success || !json.data) throw new Error(json.error || 'Failed to scrape');
         return json.data;
       }
-      throw new Error('Backend unavailable');
+      
+      // If server returns error JSON, try to read it
+      if (contentType?.includes('application/json')) {
+          const errJson = await res.json() as any;
+          throw new Error(errJson.error || `Server Error: ${res.status}`);
+      }
+
+      throw new Error(`Backend unavailable: ${res.status}`);
     } catch (e) {
-      console.warn('Backend unavailable or timed out. Using mock data.', e);
+      console.warn('Scraping failed, falling back to mock data.', e);
+      // Fallback only if strictly necessary, but for now we want to see if it works.
+      // If we are in "Demo Mode" frequently, user gets confused. 
+      // Let's modify the fallback text to be more helpful if it looks like a real error.
+      
       await mockDelay();
       // Simple mock for demo
       return {
         title: '상품 정보를 가져올 수 없습니다 (Demo Mode)',
         image: 'https://via.placeholder.com/150?text=No+Image',
-        description: '백엔드 서버가 연결되지 않아 예시 데이터를 표시합니다. (네트워크 타임아웃)',
+        description: '백엔드 서버가 연결되지 않았거나 차단되었습니다. URL을 직접 입력해보세요.',
         price: '0',
         siteName: new URL(url).hostname,
         url: url

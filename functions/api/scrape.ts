@@ -33,76 +33,117 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const isMusinsa = url.includes('musinsa.com');
     const isOhHouse = url.includes('ohou.se');
 
-    // Fetch HTML
-    // Note: Some sites might block bots. In a production Worker, you might need a proxy or set User-Agent.
+    // Fetch HTML with browser-like headers
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Referer': isNaver ? 'https://search.naver.com/' : 'https://www.google.com/'
       }
     });
 
     if (!response.ok) {
-      return new Response(JSON.stringify({ success: false, error: 'Failed to fetch external URL' }), { status: 500 });
+      return new Response(JSON.stringify({ success: false, error: `Failed to fetch external URL: ${response.status}` }), { status: response.status });
     }
 
     const html = await response.text();
     const $ = load(html);
 
-    // Default Extraction (OpenGraph)
-    let title = $('meta[property="og:title"]').attr('content') || $('title').text() || '';
+    // 1. Try OpenGraph (Standard)
+    let title = $('meta[property="og:title"]').attr('content') || '';
     let image = $('meta[property="og:image"]').attr('content') || '';
     let description = $('meta[property="og:description"]').attr('content') || '';
     let siteName = $('meta[property="og:site_name"]').attr('content') || new URL(url).hostname;
     let price = '';
 
-    // Platform Specific Logic
-    if (isNaver) {
-      // Naver SmartStore
-      // Try JSON-LD first (most reliable)
-      $('script[type="application/ld+json"]').each((_, el) => {
-        try {
-          const json = JSON.parse($(el).html() || '{}');
-          if (json['@type'] === 'Product') {
-            if (json.name) title = json.name;
-            if (json.image) image = json.image;
-            if (json.offers?.price) price = json.offers.price;
+    // 2. Try JSON-LD (Rich Snippets) - High priority for price
+    $('script[type="application/ld+json"]').each((_, el) => {
+      try {
+        const jsonContent = $(el).html();
+        if (jsonContent) {
+          const json = JSON.parse(jsonContent);
+          // Handle Array of JSON-LD or single object
+          const items = Array.isArray(json) ? json : [json];
+          
+          for (const item of items) {
+             if (item['@type'] === 'Product') {
+              if (!title && item.name) title = item.name;
+              if (!image && item.image) {
+                // image can be string or array
+                image = Array.isArray(item.image) ? item.image[0] : item.image;
+              }
+              if (item.offers) {
+                const offer = Array.isArray(item.offers) ? item.offers[0] : item.offers;
+                if (offer && offer.price) price = String(offer.price);
+              }
+             }
           }
-        } catch(e) {}
-      });
-
-      // Naver Selectors fallback
-      if (!price) {
-        price = $('._22kNQuEXmb').first().text() || // Common price class
-                $('span.lowest_price').text() ||
-                $('.price_num').text(); 
+        }
+      } catch(e) {
+        // ignore json parse error
       }
+    });
+
+    // 3. Platform Specific Fallbacks (CSS Selectors)
+    if (isNaver) {
       siteName = 'Naver Shopping';
+      
+      // Title Fallback
+      if (!title) {
+        title = $('h3._22kNQuEXmb').text() || 
+                $('._22kNQuEXmb').first().text() || 
+                $('.prod_name').text() || // Older smartstore
+                $('title').text();
+      }
+
+      // Price Fallback
+      if (!price) {
+        // Common SmartStore selectors
+        const priceSelectors = [
+          '.lowest_price', 
+          '._1LY7DqCnwR', 
+          '.price_num', 
+          '.product_price .price', 
+          '.thmb .price'
+        ];
+        for (const sel of priceSelectors) {
+          const txt = $(sel).text();
+          if (txt) {
+            price = txt;
+            break;
+          }
+        }
+      }
     } else if (isMusinsa) {
-      // Musinsa
-      // Price is tricky on Musinsa due to dynamic loading, but often present in metadata or specific spans
-      price = $('#goods_price').text().trim() || 
+      // Musinsa logic
+      if (!price) {
+         price = $('#goods_price').text().trim() || 
               $('.product_article_price').text().trim() ||
               $('meta[property="product:price:amount"]').attr('content') || '';
-      
+      }
       const brand = $('.product_info_head .item_categories a').first().text();
       if(brand) siteName = `Musinsa (${brand})`;
       else siteName = 'Musinsa';
 
     } else if (isOhHouse) {
-      // Ohouse (Today's House)
-      // Usually "production-selling-header__title"
-      const ohouTitle = $('.production-selling-header__title__name').text();
-      if (ohouTitle) title = ohouTitle;
-
-      const ohouPrice = $('.production-selling-header__price__price .number').first().text();
-      if (ohouPrice) price = ohouPrice;
-
+      // Ohouse
+      if (!title) title = $('.production-selling-header__title__name').text();
+      if (!price) price = $('.production-selling-header__price__price .number').first().text();
       siteName = '오늘의집';
     }
 
-    // Cleanup data
+    // 4. Final Cleanup
+    // Remove "NAVER ... : Brand Name" suffix from title if common
+    if (isNaver && title.includes(' : 네이버 쇼핑')) {
+      title = title.split(' : 네이버 쇼핑')[0];
+    }
+    
     title = title.trim();
     price = price.replace(/[^0-9]/g, ''); // Keep only numbers
+
+    // If still no title, use URL
+    if (!title) title = url;
 
     return new Response(JSON.stringify({
       success: true,

@@ -2,7 +2,7 @@
   "name": "wishpocket",
   "version": "1.0.0",
   "description": "Mobile-friendly wishlist maker",
-  "main": "index.tsx",
+  "main": "src/index.tsx",
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build"
