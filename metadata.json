@@ -1,0 +1,5 @@
+{
+  "name": "WishPocket",
+  "description": "A mobile-first wishlist maker that scrapes product data and creates shareable cards.",
+  "requestFramePermissions": []
+}
