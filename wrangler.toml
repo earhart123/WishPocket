@@ -8,4 +8,4 @@ binding = "WISH_KV"
 id = "YOUR_KV_NAMESPACE_ID"
 
 [site]
-bucket = "./build"
+bucket = "./dist"
